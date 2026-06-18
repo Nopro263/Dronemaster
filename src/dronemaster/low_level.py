@@ -3,6 +3,7 @@ import re
 from asyncio import Future, InvalidStateError
 from typing import List, Optional, Any
 from fastapi import HTTPException
+from .utils import command_logger
 
 OK = [r"^ok$"]
 ERROR = [r"^error$"]
@@ -44,8 +45,8 @@ class RetryAction(Action):
         self.future = asyncio.get_running_loop().create_future()
         count = 1
 
-        while count < self.retry_count:
-            print("\t\t\t", self.command.encode())
+        while count <= self.retry_count:
+            command_logger.debug("[out] [retry %s/%s] '%s'", count, self.retry_count, self.command)
             transport.sendto(self.command.encode(), (target, 8889))
 
             try:
@@ -86,8 +87,10 @@ class RepeatAction(Action):
 
     async def send(self, transport: asyncio.DatagramTransport, target: str):
         for i in range(1, 6):
-            print("\t\t\t", f"Re{RepeatAction.counter % 100:02d}{i:02d} {self.command}".encode())
-            transport.sendto(f"Re{RepeatAction.counter % 100:02d}{i:02d} {self.command}".encode(), (target, 8889))
+            
+            command = f"Re{RepeatAction.counter % 100:02d}{i:02d} {self.command}"
+            command_logger.debug("[out] [repeat  %s] '%s'", i, command)
+            transport.sendto(command.encode(), (target, 8889))
 
         RepeatAction.counter += 1
 
@@ -129,7 +132,7 @@ class RepeatAction(Action):
 
 class RobomasterProtocol(asyncio.DatagramProtocol):
     def __init__(self):
-        self.transport = None
+        self.transport: asyncio.DatagramTransport = None # type: ignore
         self.waiting_action: Optional[Action] = None
         self._on_state = self.on_state
 
@@ -140,10 +143,9 @@ class RobomasterProtocol(asyncio.DatagramProtocol):
         self.transport = transport
 
     def connection_lost(self, exc):
-        self.transport = None
+        self.transport = None # type: ignore
 
     def datagram_received(self, data, addr):
-        #print(addr[0], data)
         if data.startswith(b"mid:"):
             self.state_received(data.strip(), addr)
         else:
@@ -169,13 +171,13 @@ class RobomasterProtocol(asyncio.DatagramProtocol):
         asyncio.get_running_loop().create_task(self.on_state(state))
 
     def received(self, data, addr):
-        print(data)
         if self.waiting_action is None:
             if RepeatAction.last_answer_id == data[2:4]:
                 return # was from previous action
-            print("unexpected data", data, addr)
+            command_logger.warning("[in] '%s' was not expected since no action is running", data.decode())
             return
 
+        command_logger.debug("[in] '%s'", data.decode())
         self.waiting_action.on_receive(data, addr)
 
     async def send_action(self, action: Action, target: str):
@@ -188,7 +190,7 @@ class RobomasterProtocol(asyncio.DatagramProtocol):
             self.waiting_action = None
 
     def send_command_noanswer(self, command: str, target: str):
-        #print("\t\t\t", command.encode())
+        command_logger.debug("[out] [no answer] '%s'", command)
         self.transport.sendto(command.encode(), (target, 8889))
 
 
@@ -197,7 +199,6 @@ transport: asyncio.DatagramTransport
 protocol: RobomasterProtocol
 
 async def start():
-    print("Starting")
     global transport, protocol
     loop = asyncio.get_running_loop()
 

@@ -2,13 +2,10 @@ import inspect
 
 from .low_level import ProtocolError, RepeatAction, RetryAction, RobomasterProtocol, Action, OK, ANY
 from . import low_level as l
+from .utils import limit
 from time import time
 from typing import Dict, List, Any, Literal, Optional, Tuple, Sequence
 
-
-def limit(v: float, min: float, max: float):
-    if v > max or v < min:
-        raise ValueError(f"{v} must be in range of [{min},{max}]")
 
 class Drone:
     def __init__(self, ip: str):
@@ -29,7 +26,7 @@ class Drone:
             delta = time() - self.last_state["last_update"]
         else:
             delta = 0
-        state.update({"last_update": time(), "delta": delta, "connected": True})
+        state.update({"last_update": time(), "delta": delta})
         self.last_state = state
         await self.on_state(state)
 
@@ -49,7 +46,7 @@ class Drone:
             await l.start()
         
         if l.protocol.on_state != l.protocol._on_state:
-            raise RuntimeError("sdk only supports one connected drone at a time")
+            raise RuntimeError("the current sdk supports only one connected drone at a time")
         
         await self.action(RetryAction(
             command="command",
