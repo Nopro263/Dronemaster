@@ -4,7 +4,54 @@ from .low_level import ProtocolError, RepeatAction, RetryAction, RobomasterProto
 from . import low_level as l
 from .utils import limit
 from time import time
-from typing import Dict, List, Any, Literal, Optional, Tuple, Sequence
+from typing import Dict, TypedDict, Any, Optional, Tuple, Callable, Coroutine
+
+class DroneState(TypedDict):
+    pitch: int
+    """pitch in degrees"""
+    roll: int
+    """roll in degrees"""
+    yaw: int
+    """yaw in degrees"""
+
+    vgx: int
+    """velocity in x-direction (forwards/backwards) in dm/s"""
+    vgy: int
+    """velocity in y-direction (left/right) in dm/s"""
+    vgz: int
+    """velocity in z-direction (up/down) in dm/s"""
+
+    bat: int
+    """battery percentage"""
+    templ: int
+    """the lower range of the internal temperature sensor in °C"""
+    temph: int
+    """the upper range of the internal temperature sensor in °C"""
+
+    tof: int
+    """the vertical distance to ground in cm. reported as 10 if out of range"""
+
+    h: int
+    """the calculated height, note that this only works in flight"""
+
+    time: int
+    """number of seconds the drone has been flying"""
+
+    agx: float
+    """acceleration in x-direction in cm/s²"""
+    agy: float
+    """acceleration in y-direction in cm/s²"""
+    agz: float
+    """acceleration in z-direction in cm/s²"""
+
+    baro: float
+    """Height above sea level as reported by the barometer in m"""
+
+    last_update: float
+    """unix timestamp of the last update"""
+
+    delta: float
+    """time in seconds between the last two state packets"""
 
 
 class Drone:
@@ -15,6 +62,7 @@ class Drone:
         self.matrix = Matrix(self)
         self.last_state: Dict[str, Any] = {}
         self.connected = False
+        self._state_subscribers = []
 
     async def action(self, action: Action, ignore_not_connected: bool = False) -> Any:
         if not self.connected and not ignore_not_connected:
@@ -28,10 +76,13 @@ class Drone:
             delta = 0
         state.update({"last_update": time(), "delta": delta})
         self.last_state = state
-        await self.on_state(state)
+        for sub in self._state_subscribers:
+            r = sub(state)
+            if inspect.iscoroutine(r):
+                await r
 
-    async def on_state(self, state: dict):
-        pass
+    def state_subscribe(self, callable: Callable[[DroneState], Coroutine[Any, Any, None]]):
+        self._state_subscribers.append(callable)
 
     async def initialize(self) -> None:
         """

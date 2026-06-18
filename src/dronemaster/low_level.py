@@ -1,18 +1,16 @@
 import asyncio
 import re
-from asyncio import Future, InvalidStateError
 from typing import List, Optional, Any
-from fastapi import HTTPException
 from .utils import command_logger
 
 OK = [r"^ok$"]
 ERROR = [r"^error$"]
 ANY = [r"^.*?$"]
 
-class ProtocolError(HTTPException):
+class ProtocolError(Exception):
     def __init__(self, response: str):
         self.response = response
-        super().__init__(status_code=418, detail=str(self))
+        super().__init__()
 
     def __str__(self):
         return f"ProtocolError({self.response})"
@@ -32,6 +30,7 @@ class Action:
         pass
 
     def on_cancel(self):
+        command_logger.info("cancelled while waiting for answer to '%s'", self.command)
         self.future.cancel()
 
 class RetryAction(Action):
@@ -55,6 +54,7 @@ class RetryAction(Action):
             except asyncio.TimeoutError:
                 count += 1
 
+        command_logger.error("no answer received for '%s'", self.command)
         raise TimeoutError("tried to send the command too often")
 
     def on_receive(self, data: bytes, addr):
@@ -65,11 +65,13 @@ class RetryAction(Action):
             return
         for pattern in self.positive_answers:
             if re.match(pattern, data.decode()):
+                command_logger.info("received '%s' as answer for '%s'", data.decode(), self.command)
                 self.future.set_result(data.decode())
                 return
 
         for pattern in self.negative_answers:
             if re.match(pattern, data.decode()):
+                command_logger.error("received '%s' as answer for '%s'", data.decode(), self.command)
                 self.future.set_exception(ProtocolError(data.decode()))
                 return
 
@@ -98,6 +100,7 @@ class RepeatAction(Action):
             response = await asyncio.wait_for(asyncio.shield(self.future), timeout=self.timeout)
             return response
         except asyncio.TimeoutError:
+            command_logger.error("no answer received for '%s'", self.command)
             raise TimeoutError("did not respond within " + str(self.timeout)) from None
 
 
@@ -119,11 +122,13 @@ class RepeatAction(Action):
             return
         for pattern in self.positive_answers:
             if re.match(pattern, data.decode()):
+                command_logger.info("received '%s' as answer for '%s'", data.decode(), self.command)
                 self.future.set_result(data.decode())
                 return
 
         for pattern in self.negative_answers:
             if re.match(pattern, data.decode()):
+                command_logger.error("received '%s' as answer for '%s'", data.decode(), self.command)
                 self.future.set_exception(ProtocolError(data.decode()))
                 return
 

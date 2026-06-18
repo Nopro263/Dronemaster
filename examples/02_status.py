@@ -6,6 +6,9 @@ import dronemaster
 import logging
 logging.basicConfig(format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s") # dronemaster uses the logging module internally
 
+async def printState(state: dronemaster.DroneState):
+    print(state)
+
 async def main():
     # create the drone, but don't connect
     ep_drone = dronemaster.Drone("127.0.0.1")
@@ -17,16 +20,10 @@ async def main():
     battery = await ep_drone.battery()
     print(f"Connected with drone '{serial}' with {battery}%")
 
-    ep_flight = ep_drone.flight
+    ep_drone.state_subscribe(printState)
 
-    # takeoff and wait for completion (up to 20s)
-    await ep_flight.takeoff()
-
-    # fly forwards 20cm
-    await ep_flight.forward(20, timeout=7)
-
-    # land again
-    await ep_flight.land()
+    await asyncio.sleep(5)
+    
 
 if __name__ == '__main__':
     asyncio.run(main())
