@@ -4,7 +4,7 @@ from .low_level import ProtocolError, RepeatAction, RetryAction, RobomasterProto
 from . import low_level as l
 from .utils import limit
 from time import time
-from typing import Dict, TypedDict, Any, Optional, Tuple, Callable, Coroutine
+from typing import Dict, TypedDict, Any, Optional, Tuple, Callable, Coroutine, Literal, Union
 
 class DroneState(TypedDict):
     pitch: int
@@ -60,6 +60,7 @@ class Drone:
         self.flight = Flight(self)
         self.rgb = RGBLed(self)
         self.matrix = Matrix(self)
+        self.video = Video(self)
         self.last_state: Dict[str, Any] = {}
         self.connected = False
         self._state_subscribers = []
@@ -142,53 +143,14 @@ class Drone:
             timeout=1
         )))
 
-    async def streamon(self) -> None:
-        """
-        Starts the stream so the drone sends the H264 stream to port 11111
-
-        :raises ProtocolError: raised when not receiving `ok`
-        :raises TimeoutError: raised when not answering after 5s
-        """
-        await self.action(RetryAction(
-            command="streamon",
-            positive_answers=OK,
-            negative_answers=ANY,
-            retry_count=5,
-            timeout=1
-        ))
-
-    async def streamoff(self) -> None:
-        """
-        Stops the video stream
-
-        :raises ProtocolError: raised when not receiving `ok`
-        :raises TimeoutError: raised when not answering after 5s
-        """
-        await self.action(RetryAction(
-            command="streamoff",
-            positive_answers=OK,
-            negative_answers=ANY,
-            retry_count=5,
-            timeout=1
-        ))
-    
-    async def downvision(self, on: bool) -> None:
-        """
-        Switches the used camera.
-
-        :param on: if the downwards camera should be used
-        :raises ProtocolError: raised when not receiving `ok`
-        :raises TimeoutError: raised when not answering after 5s
-        """
-        await self.action(RetryAction(
-            command=f"downvision {1 if on else 0}",
-            positive_answers=OK,
-            negative_answers=ANY,
-            retry_count=5,
-            timeout=1
-        ))
-
     async def ext_tof(self):
+        """
+        Reads the horizontal distance of the drone to the front.
+
+        :returns: the horizontal distance to the front in mm or `None` if out of range
+        :raises ProtocolError: raised when not receiving data in the correct format
+        :raises TimeoutError: raised when not answering after 2.5s
+        """
         raw = await self.action(RetryAction(
             command="EXT tof?",
             positive_answers=[r"^tof \d+$"],
@@ -280,6 +242,114 @@ class Module:
 
     async def action(self, action: Action):
         return await self.drone.action(action)
+
+class Video(Module):
+    async def streamon(self) -> None:
+        """
+        Starts the stream so the drone sends the H264 stream to port 11111
+
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        await self.action(RetryAction(
+            command="streamon",
+            positive_answers=OK,
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
+
+    async def streamoff(self) -> None:
+        """
+        Stops the video stream
+
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        await self.action(RetryAction(
+            command="streamoff",
+            positive_answers=OK,
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
+    
+    async def downvision(self, on: bool) -> None:
+        """
+        Switches the used camera.
+
+        :param on: if the downwards camera should be used
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        await self.action(RetryAction(
+            command=f"downvision {1 if on else 0}",
+            positive_answers=OK,
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
+    
+    async def setfps(self, fps: Literal["high","middle","low"]) -> None:
+        """
+        Sets the streams fps to
+        - `high` -> 30fps
+        - `middle` -> 15fps
+        - `low` -> 5fps
+
+        :param fps: the requested fps
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        await self.action(RetryAction(
+            command=f"setfps {fps}",
+            positive_answers=OK,
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
+    
+    async def setbitrate(self, bitrate: Literal["auto",1,2,3,4,5]) -> None:
+        """
+        Sets the streams maximum bitrate to auto or the requested Mbps
+
+        :param bitrate: the bitrate in Mbps or `auto`
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        bt = 0
+
+        if bitrate == "auto":
+            bt = 0
+        else:
+            bt = bitrate
+
+        await self.action(RetryAction(
+            command=f"setbitrate {bt}",
+            positive_answers=OK,
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
+    
+    async def setresolution(self, resolution: Literal["high","low"]) -> None:
+        """
+        Sets the video streams resolution
+        - `high` -> 720P
+        - `low` -> 480P
+
+        :param resolution: the requested resolution
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+
+        await self.action(RetryAction(
+            command=f"setresolution {resolution}",
+            positive_answers=OK,
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
 
 class Flight(Module):
     async def takeoff(self) -> None:
@@ -506,7 +576,7 @@ class Flight(Module):
             timeout=1
         ))
 
-    async def flip(self, direction: str, timeout: float = 5) -> None:
+    async def flip(self, direction: Literal["l", "r", "f", "b"], timeout: float = 5) -> None:
         """
         Flips the drone forwards, backwards, left or right
 
@@ -514,7 +584,6 @@ class Flight(Module):
         :param timeout: the timeout in seconds
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after timeout
-        :raises ValueError: raised when the direction is not l/r/f or b
         """
         if direction not in ("l", "r", "f", "b"):
             raise ValueError("Direction must be in l,r,f,b")
@@ -635,7 +704,7 @@ class Matrix(Module):
         limit(brightness, 0, 255)
         await self.action(RetryAction(
             command=f"EXT mled sl {brightness}",
-            positive_answers=[r"^mled ok$"],
+            positive_answers=[r"^matrix ok$"],
             negative_answers=ANY,
             timeout=0.5,
             retry_count=5

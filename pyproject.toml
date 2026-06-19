@@ -1,6 +1,6 @@
 [project]
 name = "dronemaster"
-version = "0.0.2"
+version = "0.0.3"
 authors = [
   { name="Noah", email="82201000+Nopro263@users.noreply.github.com" },
 ]
@@ -11,7 +11,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-license = "MIT"
+license = "AGPL-3.0"
 license-files = ["LICEN[CS]E*"]
 
 [project.urls]
