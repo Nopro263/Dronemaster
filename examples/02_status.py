@@ -1,5 +1,3 @@
-__import__("sys").path += ["./src"]
-
 import asyncio
 import dronemaster
 

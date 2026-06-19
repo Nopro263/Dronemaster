@@ -1,10 +1,10 @@
 import inspect
 
-from .low_level import ProtocolError, RepeatAction, RetryAction, RobomasterProtocol, Action, OK, ANY
+from .low_level import ProtocolError, RepeatAction, RetryAction, Action, OK, ANY
 from . import low_level as l
 from .utils import limit
 from time import time
-from typing import Dict, TypedDict, Any, Optional, Tuple, Callable, Coroutine, Literal, Union
+from typing import Dict, TypedDict, Any, Optional, Tuple, Callable, Coroutine, Literal
 
 class DroneState(TypedDict):
     pitch: int
@@ -547,7 +547,7 @@ class Flight(Module):
 
     async def motoron(self) -> None:
         """
-        Enters motoron-mode.
+        Enters motoron-mode
         this is a low speed motor rotation mode to reduce the internal temperature in order to avoid overheating
 
         :raises ProtocolError: raised when not receiving `ok`
