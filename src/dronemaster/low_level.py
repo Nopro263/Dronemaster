@@ -207,7 +207,9 @@ async def start():
     global transport, protocol
     loop = asyncio.get_running_loop()
 
-    transport, protocol = await loop.create_datagram_endpoint(RobomasterProtocol, local_addr=("0.0.0.0", 8890), reuse_port=True)
+    reuse_port = hasattr(__import__("socket"), "SO_REUSEPORT")
+
+    transport, protocol = await loop.create_datagram_endpoint(RobomasterProtocol, local_addr=("0.0.0.0", 8890), reuse_port=reuse_port)
     return protocol
 
 async def stop():
