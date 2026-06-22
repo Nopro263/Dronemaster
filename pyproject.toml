@@ -1,6 +1,6 @@
 [project]
 name = "dronemaster"
-version = "1.0.1"
+version = "1.1.0"
 authors = [
   { name="Noah Rottermanner" },
 ]
@@ -18,3 +18,10 @@ keywords = ["dji","tello","Tello EDU","robomaster"]
 [project.urls]
 Homepage = "https://github.com/Nopro263/Dronemaster"
 Issues = "https://github.com/Nopro263/Dronemaster/issues"
+
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project.optional-dependencies]
+simulator = ["opencv-python"]

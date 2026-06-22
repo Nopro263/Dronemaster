@@ -9,7 +9,7 @@ async def printState(state: dronemaster.DroneState):
 
 async def main():
     # create the drone, but don't connect
-    ep_drone = dronemaster.Drone("192.168.10.1")
+    ep_drone = dronemaster.Drone("127.0.0.1")
 
     # mark the drone as active and connect to it
     await ep_drone.initialize()
