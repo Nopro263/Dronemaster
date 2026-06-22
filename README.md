@@ -32,7 +32,7 @@ After establishing the connection, you can use many features like:
 and many more...
 
 # Simulator
-to simulate a simple drone, run `python3 -m dronemaster` in a seperate terminal to make a drone listen on your local ip (eg. `127.0.0.1`)
+to simulate a simple drone, run `python3 -m dronemaster` in a seperate terminal and make a drone listen on your local ip (eg. `127.0.0.1`)
 
 # Examples
 Find all examples on [GitHub](https://github.com/Nopro263/Dronemaster) in the `examples` directory.

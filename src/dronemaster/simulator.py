@@ -154,6 +154,11 @@ class SimulatorProtocol(asyncio.DatagramProtocol):
             self.transport.close()
             return None
         
+        if m := re.match(r"rc (-?\d+) (-?\d+) (-?\d+) (-?\d+)$", command):
+            roll, pitch, throttle, yaw = m.group(1), m.group(2), m.group(3), m.group(4)
+            print(f"R:{roll} P:{pitch} T:{throttle} Y:{yaw}")
+            return None
+        
         if m := re.match(r"EXT mled sl (\d+)$", command):
             brightness = m.group(1)
             print("brightness", brightness)
@@ -277,6 +282,7 @@ class ProtocolSimulator:
         return protocol
     
     async def loop(self):
+        print("Starting simulator on '127.0.0.1'")
         protocol = await self.start()
         while True:
             if protocol.transport.is_closing():
