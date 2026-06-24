@@ -3,6 +3,11 @@ import dronemaster
 
 import logging
 logging.basicConfig(format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s") # dronemaster uses the logging module internally
+dronemaster.command_logger.setLevel(logging.WARNING) # do not log raw commands
+# DEBUG logs exactly what commands are sent and received (even repeated ones)
+# INFO only logs successful commands and their response
+# WARN logs unexpected data
+# ERROR logs invalid answers to commands and timeouts
 
 async def main():
     # create the drone, but don't connect

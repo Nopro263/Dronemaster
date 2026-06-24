@@ -6,4 +6,8 @@ async def main():
     await simulator.loop()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Exiting")
+        exit(0)

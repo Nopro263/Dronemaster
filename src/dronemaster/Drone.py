@@ -1,12 +1,18 @@
 import inspect
 
-from .low_level import ProtocolError, RepeatAction, RetryAction, Action, OK, ANY
+from .low_level import ProtocolError, RepeatAction, RetryAction, Action, OK, ANY, ANY_POSITIVE
 from . import low_level as l
 from .utils import limit
 from time import time
 from typing import Dict, TypedDict, Any, Optional, Tuple, Callable, Coroutine, Literal
 
 class DroneState(TypedDict):
+    """
+    The current state of the drone, reported ~10x per second.
+    Notes:
+    - the velocities are calculated by using the downwards camera, so when flying low or above featureless ground, it may be wrongly reported as 0
+    """
+
     pitch: int
     """pitch in degrees"""
     roll: int
@@ -55,17 +61,51 @@ class DroneState(TypedDict):
 
 
 class Drone:
+    """
+    The main class to control the drone.
+
+    Example:
+    ```python
+
+    drone = Drone(DRONE_IP)
+    await drone.initialize()
+
+    # calls my_callback_function ~10x per second
+    drone.state_subscribe(my_callback_function)
+
+    # you should call this every few seconds to know if the drone has disconnected
+    await drone.keepalive()
+
+    # everything flight-related
+    flight = drone.flight
+
+    # control the rgb-led on top of the extension-module
+    rgb = drone.rgb
+
+    # control the extension-modules led-matrix
+    matrix = drone.matrix
+
+    # everything video-related
+    video = drone.video
+    ```
+
+    """
     def __init__(self, ip: str):
         self.ip = ip
+        """the connected ip"""
         self.flight = Flight(self)
+        """module to control everything flight-related"""
         self.rgb = RGBLed(self)
+        """module to control the top-led"""
         self.matrix = Matrix(self)
+        """module to control the 8x8 matrix"""
         self.video = Video(self)
+        """module to control everything video-related"""
         self.last_state: Dict[str, Any] = {}
         self.connected = False
         self._state_subscribers = []
 
-    async def action(self, action: Action, ignore_not_connected: bool = False) -> Any:
+    async def _action(self, action: Action, ignore_not_connected: bool = False) -> Any:
         if not self.connected and not ignore_not_connected:
             raise ProtocolError("you are not connected to the drone")
         return await l.protocol.send_action(action, self.ip)
@@ -83,6 +123,11 @@ class Drone:
                 await r
 
     def state_subscribe(self, callable: Callable[[DroneState], Coroutine[Any, Any, None]]):
+        """
+        Adds the callable to the list of functions to be called when a new state is available
+
+        :param callable: The async function to be called when a new state-packet is received
+        """
         self._state_subscribers.append(callable)
 
     async def initialize(self) -> None:
@@ -100,7 +145,7 @@ class Drone:
         if l.protocol.on_state != l.protocol._on_state:
             raise RuntimeError("the current sdk supports only one connected drone at a time")
         
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command="command",
             positive_answers=OK,
             negative_answers=ANY,
@@ -119,7 +164,7 @@ class Drone:
         :raises ProtocolError: raised when not receiving the correct format
         :raises TimeoutError: raised when not answering after 5s
         """
-        return await self.action(RetryAction(
+        return await self._action(RetryAction(
             command="sn?",
             positive_answers=[r"^[A-Z0-9]{14}$"],
             negative_answers=ANY,
@@ -135,13 +180,95 @@ class Drone:
         :raises ProtocolError: raised when not receiving the battery percentage
         :raises TimeoutError: raised when not answering after 5s
         """
-        return int(await self.action(RetryAction(
+        return int(await self._action(RetryAction(
             command="battery?",
             positive_answers=[r"^\d{1,3}$"],
             negative_answers=ANY,
             retry_count=5,
             timeout=1
         )))
+    
+    async def flight_time(self) -> int:
+        """
+        Gets the time the motors have been running
+
+        :returns: the motor-time in seconds
+        :raises ProtocolError: raised when not receiving the battery percentage
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        resp = await self._action(RetryAction(
+            command="time?",
+            positive_answers=[r"^\d+s$"],
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
+
+        return int(resp[:-1])
+    
+    async def sdk_version(self) -> int:
+        """
+        Gets current sdk version (sometimes reported as 20 or 30)
+
+        :returns: the sdk version
+        :raises ProtocolError: raised when not receiving the battery percentage
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        return int(await self._action(RetryAction(
+            command="sdk?",
+            positive_answers=[r"^\d+$"],
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        )))
+    
+    async def get_hardware(self) -> Literal["TELLO", "RMTT"]:
+        """
+        Checks if the drone is connected to the extension module
+
+        :returns: `RMTT` if connected to the extension module, else `TELLO`
+        :raises ProtocolError: raised when not receiving the battery percentage
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        return await self._action(RetryAction(
+            command="hardware?",
+            positive_answers=[r"^(TELLO)|(RMTT)$"],
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
+    
+    async def wifi_serial(self) -> str:
+        """
+        Gets the wifi serial number
+
+        :returns: the wifi serial number
+        :raises ProtocolError: raised when not receiving the battery percentage
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        return await self._action(RetryAction(
+            command="wifi?",
+            positive_answers=ANY_POSITIVE,
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
+    
+    async def wifi_version(self) -> str:
+        """
+        Gets the wifi version
+
+        :returns: the wifi version in the format `wifivx.x.x.x`
+        :raises ProtocolError: raised when not receiving the battery percentage
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        return await self._action(RetryAction(
+            command="wifiversion?",
+            positive_answers=[r"^wifiv\d+\.\d+\.\d+\.\d+$"],
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
 
     async def ext_tof(self):
         """
@@ -151,7 +278,7 @@ class Drone:
         :raises ProtocolError: raised when not receiving data in the correct format
         :raises TimeoutError: raised when not answering after 2.5s
         """
-        raw = await self.action(RetryAction(
+        raw = await self._action(RetryAction(
             command="EXT tof?",
             positive_answers=[r"^tof \d+$"],
             negative_answers=ANY,
@@ -173,7 +300,7 @@ class Drone:
         :raises ProtocolError: raised when not receiving data in the correct format
         :raises TimeoutError: raised when not answering after 2.5s
         """
-        raw = await self.action(RetryAction(
+        raw = await self._action(RetryAction(
             command="tof?",
             positive_answers=[r"^\d+mm$"],
             negative_answers=ANY,
@@ -196,7 +323,7 @@ class Drone:
         :raises TimeoutError: raised when not answering after 2.5s
         """
         if l.protocol.waiting_action is None:
-            await self.action(RetryAction(
+            await self._action(RetryAction(
                 command="command",
                 positive_answers=OK,
                 negative_answers=ANY,
@@ -205,6 +332,46 @@ class Drone:
             ))
             return True
         return False
+    
+    async def set_own_wifi(self, ssid: str, pwd: str) -> None:
+        """
+        Sets the ssid/password to use when the drone creates its own wifi.
+        Note that the drone adds a `RMTT-` or `TELLO-` prefix to the ssid.
+        The drone reboots after 3s, so you have to manually reconnect
+
+        :param ssid: the drone-wifis ssid
+        :param pwd: the password
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+
+        await self._action(RetryAction(
+            command=f"wifi {ssid} {pwd}",
+            positive_answers=[r"^OK,drone will reboot in 3s$"],
+            negative_answers=ANY,
+            timeout=0.5,
+            retry_count=5
+        ))
+    
+    async def set_connecting_wifi(self, ssid: str, pwd: str) -> None:
+        """
+        Sets the ssid/password of an existing wifi to connect to.
+        Note that the drone sometimes receives other/incorrect ip-adresses.
+        The drone reboots after 3s, so you have to manually reconnect
+
+        :param ssid: the wifis ssid
+        :param pwd: the password
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+
+        await self._action(RetryAction(
+            command=f"ap {ssid} {pwd}",
+            positive_answers=[r"^OK,drone will reboot in 3s$"],
+            negative_answers=ANY,
+            timeout=0.5,
+            retry_count=5
+        ))
 
     async def send_raw_command(self, command, wait_for_answer: bool = True, timeout: float = 1) -> Optional[str]:
         """
@@ -217,9 +384,9 @@ class Drone:
         :raises TimeoutError: raised when not answering after 5 * timeout
         """
         if wait_for_answer:
-            return await self.action(RetryAction(
+            return await self._action(RetryAction(
                 command=command,
-                positive_answers=ANY,
+                positive_answers=ANY_POSITIVE,
                 negative_answers=ANY,
                 retry_count=5,
                 timeout=timeout
@@ -230,7 +397,7 @@ class Drone:
 
     def reboot(self) -> None:
         """
-        Reboots the drone
+        Reboots the drone and closes the connection, so you have to manually reconnect with it
         """
         l.protocol.send_command_noanswer("reboot", self.ip)
         self.connected = False
@@ -240,8 +407,8 @@ class Module:
     def __init__(self, drone: Drone):
         self.drone = drone
 
-    async def action(self, action: Action):
-        return await self.drone.action(action)
+    async def _action(self, action: Action):
+        return await self.drone._action(action)
 
 class Video(Module):
     async def streamon(self) -> None:
@@ -251,7 +418,7 @@ class Video(Module):
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 5s
         """
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command="streamon",
             positive_answers=OK,
             negative_answers=ANY,
@@ -266,7 +433,7 @@ class Video(Module):
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 5s
         """
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command="streamoff",
             positive_answers=OK,
             negative_answers=ANY,
@@ -282,7 +449,7 @@ class Video(Module):
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 5s
         """
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command=f"downvision {1 if on else 0}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -301,7 +468,7 @@ class Video(Module):
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 5s
         """
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command=f"setfps {fps}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -324,7 +491,7 @@ class Video(Module):
         else:
             bt = bitrate
 
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command=f"setbitrate {bt}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -343,8 +510,26 @@ class Video(Module):
         :raises TimeoutError: raised when not answering after 5s
         """
 
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command=f"setresolution {resolution}",
+            positive_answers=OK,
+            negative_answers=ANY,
+            retry_count=5,
+            timeout=1
+        ))
+    
+    async def set_video_port(self, port: int) -> None:
+        """
+        Sets the port the drone should send the video stream
+
+        :param port: the port to send the stream to [1024,65535]
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        limit(port, 1025, 65535)
+
+        await self._action(RetryAction(
+            command=f"port 8890 {port}",
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
@@ -359,7 +544,7 @@ class Flight(Module):
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 20s
         """
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command="takeoff",
             positive_answers=OK,
             negative_answers=ANY,
@@ -376,7 +561,7 @@ class Flight(Module):
         :raises TimeoutError: raised when not answering after `timeout`
         """
         limit(dist, 20, 500)
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command=f"forward {dist}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -393,7 +578,7 @@ class Flight(Module):
         :raises TimeoutError: raised when not answering after `timeout`
         """
         limit(dist, 20, 500)
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command=f"back {dist}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -410,7 +595,7 @@ class Flight(Module):
         :raises TimeoutError: raised when not answering after `timeout`
         """
         limit(dist, 20, 500)
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command=f"up {dist}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -427,7 +612,7 @@ class Flight(Module):
         :raises TimeoutError: raised when not answering after `timeout`
         """
         limit(dist, 20, 500)
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command=f"down {dist}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -444,7 +629,7 @@ class Flight(Module):
         :raises TimeoutError: raised when not answering after `timeout`
         """
         limit(dist, 20, 500)
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command=f"left {dist}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -461,7 +646,7 @@ class Flight(Module):
         :raises TimeoutError: raised when not answering after `timeout`
         """
         limit(dist, 20, 500)
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command=f"right {dist}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -478,7 +663,7 @@ class Flight(Module):
         :raises TimeoutError: raised when not answering after `timeout`
         """
         limit(angle, 1, 360)
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command=f"cw {angle}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -495,7 +680,7 @@ class Flight(Module):
         :raises TimeoutError: raised when not answering after `timeout`
         """
         limit(angle, 1, 360)
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command=f"ccw {angle}",
             positive_answers=OK,
             negative_answers=ANY,
@@ -509,7 +694,7 @@ class Flight(Module):
         :raises ProtocolError: raised when not receiving `ok` (eg. the drone is not in the air)
         :raises TimeoutError: raised when not answering after 20s
         """
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command="land",
             positive_answers=OK,
             negative_answers=ANY,
@@ -523,7 +708,7 @@ class Flight(Module):
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 5s
         """
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command="stop",
             positive_answers= [r"^forced stop$", r"^ok$"],
             negative_answers=ANY,
@@ -537,7 +722,7 @@ class Flight(Module):
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 5s
         """
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command="emergency",
             positive_answers=OK,
             negative_answers=ANY,
@@ -553,7 +738,7 @@ class Flight(Module):
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 5s
         """
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command="motoron",
             positive_answers=OK,
             negative_answers=ANY,
@@ -568,7 +753,7 @@ class Flight(Module):
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 5s
         """
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command="motoroff",
             positive_answers=OK,
             negative_answers=ANY,
@@ -588,11 +773,43 @@ class Flight(Module):
         if direction not in ("l", "r", "f", "b"):
             raise ValueError("Direction must be in l,r,f,b")
 
-        await self.action(RepeatAction(
+        await self._action(RepeatAction(
             command=f"flip {direction}",
             positive_answers=OK,
             negative_answers=ANY,
             timeout=timeout
+        ))
+    
+    async def throwfly(self) -> None:
+        """
+        Enables the throwfly mode.
+        Throw the drone within 5s horizontally to launch the drone
+
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        await self._action(RepeatAction(
+            command="throwfly",
+            positive_answers=OK,
+            negative_answers=ANY,
+            timeout=5
+        ))
+    
+    async def speed(self, speed: int) -> None:
+        """
+        Sets the speed to use when using flying commands except the rc command
+
+        :param speed: the speed the drone is allowed to fly in cm/s [10,100]
+        :raises ProtocolError: raised when not receiving `ok`
+        :raises TimeoutError: raised when not answering after 5s
+        """
+        limit(speed, 10, 100)
+
+        await self._action(RepeatAction(
+            command=f"speed {speed}",
+            positive_answers=OK,
+            negative_answers=ANY,
+            timeout=5
         ))
 
     def rc(self, roll: int, pitch: int, throttle: int, yaw: int) -> None:
@@ -624,7 +841,7 @@ class RGBLed(Module):
         limit(red, 0, 255)
         limit(green, 0, 255)
         limit(blue, 0, 255)
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command=f"EXT led {red} {green} {blue}",
             positive_answers=[r"^led ok$"],
             negative_answers=ANY,
@@ -646,7 +863,7 @@ class RGBLed(Module):
         limit(green, 0, 255)
         limit(blue, 0, 255)
         limit(frequency, 0.1, 2.5)
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command=f"EXT led br {frequency} {red} {green} {blue}",
             positive_answers=[r"^led ok$"],
             negative_answers=ANY,
@@ -673,7 +890,7 @@ class RGBLed(Module):
         limit(green2, 0, 255)
         limit(blue2, 0, 255)
         limit(frequency, 0.1, 10)
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command=f"EXT led bl {frequency} {red1} {green1} {blue1} {red2} {green2} {blue2}",
             positive_answers=[r"^led ok$"],
             negative_answers=ANY,
@@ -702,7 +919,7 @@ class Matrix(Module):
         :raises TimeoutError: raised when not answering after 2.5s
         """
         limit(brightness, 0, 255)
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command=f"EXT mled sl {brightness}",
             positive_answers=[r"^matrix ok$"],
             negative_answers=ANY,
@@ -721,7 +938,7 @@ class Matrix(Module):
         limit(len(pattern.replace("r","").replace("b","").replace("p","").replace("0","")), 0, 0)
         limit(len(pattern), 1, 64)
 
-        await self.action(RetryAction(
+        await self._action(RetryAction(
             command=f"EXT mled g {pattern}",
             positive_answers=[r"^matrix ok$"],
             negative_answers=ANY,

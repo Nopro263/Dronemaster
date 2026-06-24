@@ -5,7 +5,8 @@ from .utils import command_logger
 
 OK = [r"^ok$"]
 ERROR = [r"^error$"]
-ANY = [r"^.*?$"]
+ANY_POSITIVE = [r"^(?!unknown command:).*?$"]
+ANY = [r".*?"]
 
 class ProtocolError(Exception):
     def __init__(self, response: str):
@@ -71,7 +72,7 @@ class RetryAction(Action):
 
         for pattern in self.negative_answers:
             if re.match(pattern, data.decode()):
-                command_logger.error("received '%s' as answer for '%s'", data.decode(), self.command)
+                command_logger.error("received '%s' as answer for '%s', expected one of %s", data.decode(), self.command, self.positive_answers)
                 self.future.set_exception(ProtocolError(data.decode()))
                 return
 
@@ -128,7 +129,7 @@ class RepeatAction(Action):
 
         for pattern in self.negative_answers:
             if re.match(pattern, data.decode()):
-                command_logger.error("received '%s' as answer for '%s'", data.decode(), self.command)
+                command_logger.error("received '%s' as answer for '%s', expected one of %s", data.decode(), self.command, self.positive_answers)
                 self.future.set_exception(ProtocolError(data.decode()))
                 return
 
@@ -176,13 +177,14 @@ class RobomasterProtocol(asyncio.DatagramProtocol):
         asyncio.get_running_loop().create_task(self.on_state(state))
 
     def received(self, data, addr):
+        data = data.strip(b"\x00")
         if self.waiting_action is None:
             if RepeatAction.last_answer_id == data[2:4]:
                 return # was from previous action
-            command_logger.warning("[in] '%s' was not expected since no action is running", data.decode())
+            command_logger.warning("[in] %s was not expected since no action is running", repr(data))
             return
 
-        command_logger.debug("[in] '%s'", data.decode())
+        command_logger.debug("[in] %s", repr(data))
         self.waiting_action.on_receive(data, addr)
 
     async def send_action(self, action: Action, target: str):

@@ -4,6 +4,7 @@ import cv2
 
 import logging
 logging.basicConfig(format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s") # dronemaster uses the logging module internally
+dronemaster.command_logger.setLevel(logging.WARNING) # do not log raw commands
 
 async def main():
     # create the drone, but don't connect
@@ -16,13 +17,16 @@ async def main():
     battery = await ep_drone.battery()
     print(f"Connected with drone '{serial}' with {battery}%")
 
+    await ep_drone.video.set_video_port(11112) # per default, port 11111 is used
+
     await ep_drone.video.streamon()
 
     # uncomment to use the downwards black and white camera
     #await ep_drone.video.downvision(True)
 
-    # listen on all ips on port 11111
-    cap = cv2.VideoCapture("udp://0.0.0.0:11111")
+    # listen on all ips on port 11112
+    # the drone sends the video in H264 format with an I-Frame every few seconds
+    cap = cv2.VideoCapture("udp://0.0.0.0:11112")
 
     while True:
         if cap.isOpened():

@@ -3,6 +3,7 @@ import dronemaster
 
 import logging
 logging.basicConfig(format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s") # dronemaster uses the logging module internally
+dronemaster.command_logger.setLevel(logging.INFO)
 
 async def main():
     # create the drone, but don't connect
@@ -13,8 +14,15 @@ async def main():
 
     serial = await ep_drone.serial_number()
     battery = await ep_drone.battery()
+    hardware = await ep_drone.get_hardware()
+    flight_time = await ep_drone.flight_time()
+    sdk = await ep_drone.sdk_version()
+    wifi_serial = await ep_drone.wifi_serial()
+    wifi_version = await ep_drone.wifi_version()
     
     print(f"Connected with drone '{serial}' with {battery}%")
+    print(f"Hardware:{hardware} Flight-Time:{flight_time}s SDK:{sdk}")
+    print(f"Wifi SN:{wifi_serial} Version:{wifi_version}")
 
     ep_matrix = ep_drone.matrix
 

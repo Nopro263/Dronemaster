@@ -57,5 +57,11 @@ async def main():
     # land again
     await ep_flight.land()
 
+    # enable throwfly
+    await ep_flight.throwfly()
+    await asyncio.sleep(5)
+    await ep_drone.rgb.set((0,0,255))
+
+
 if __name__ == '__main__':
     asyncio.run(main())

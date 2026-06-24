@@ -7,6 +7,9 @@ class SimulatorProtocol(asyncio.DatagramProtocol):
     def __init__(self) -> None:
         super().__init__()
         self.SERIAL = "0TQZM7NCNT0HAY"
+        self.HARDWARE = "RMTT"
+        self.SDK = 30
+        self.WIFIVERSION = "wifiv9.9.9.9"
 
         self.connected = set()
         self.motoron = False
@@ -17,6 +20,7 @@ class SimulatorProtocol(asyncio.DatagramProtocol):
         self.ext_tof = 8190
 
         self.video = False
+        self.video_port = 11111
         self.cap: cv2.VideoCapture = None # type: ignore
 
         self.handled = {}
@@ -138,11 +142,45 @@ class SimulatorProtocol(asyncio.DatagramProtocol):
                 print("counter-clockwise", deg)
                 return "ok"
         
+        if m := re.match(r"port (\d+) (\d+)$", command):
+            print("Video port is now:", m.group(2))
+            self.video_port = int(m.group(2))
+            return "ok"
+        
+        if m := re.match(r"ap (.+) (.+)$", command):
+            print("connecting to wifi", m.group(1), m.group(2))
+            self.transport.close()
+            return "OK,drone will reboot in 3s\x00"
+        
+        if m := re.match(r"wifi (.+) (.*)$", command):
+            print("setting own wifi to", m.group(1), m.group(2))
+            self.transport.close()
+            return "OK,drone will reboot in 3s\x00"
+        
         if command == "sn?":
             return self.SERIAL
+    
+        if command == "hardware?":
+            return self.HARDWARE
 
         if command == "battery?":
             return str(self.battery)
+        
+        if command == "time?":
+            return f"{self.air_time}s"
+        
+        if command == "sdk?":
+            return str(self.SDK)
+        
+        if command == "wifi?":
+            return "SN???"
+        
+        if command == "wifiversion?":
+            return self.WIFIVERSION
+    
+        if command == "throwfly":
+            print("The simulator can not be thrown :(")
+            return "ok"
     
         if command == "tof?":
             return f"{self.tof}mm"
@@ -226,7 +264,7 @@ class SimulatorProtocol(asyncio.DatagramProtocol):
                 data = encoded_img.tobytes()
 
                 for client in self.connected:
-                    self.transport.sendto(data, (client, 11111))
+                    self.transport.sendto(data, (client, self.video_port))
 
 
     def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
