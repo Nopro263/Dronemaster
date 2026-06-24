@@ -52,6 +52,7 @@ class SimulatorProtocol(asyncio.DatagramProtocol):
                 return "error"
             else:
                 self.air_time = 1
+                print("takeoff")
                 return "ok"
         
         if command == "land":
@@ -59,6 +60,7 @@ class SimulatorProtocol(asyncio.DatagramProtocol):
                 return "error"
             else:
                 self.air_time = 0
+                print("land")
                 return "ok"
         
         if command == "stop":
@@ -297,12 +299,15 @@ class SimulatorProtocol(asyncio.DatagramProtocol):
     
 
 class ProtocolSimulator:
+    def __init__(self, ip: str) -> None:
+        self.ip = ip
+    
     async def start(self) -> SimulatorProtocol:
         loop = asyncio.get_event_loop()
 
         reuse_port = hasattr(__import__("socket"), "SO_REUSEPORT")
 
-        transport, protocol = await loop.create_datagram_endpoint(SimulatorProtocol, local_addr=("0.0.0.0", 8889), reuse_port=reuse_port)
+        transport, protocol = await loop.create_datagram_endpoint(SimulatorProtocol, local_addr=(self.ip, 8889), reuse_port=reuse_port)
 
         async def status():
             while not transport.is_closing():
@@ -320,7 +325,7 @@ class ProtocolSimulator:
         return protocol
     
     async def loop(self):
-        print("Starting simulator on '127.0.0.1'")
+        print(f"Starting simulator on '{self.ip}'")
         protocol = await self.start()
         while True:
             if protocol.transport.is_closing():

@@ -16,7 +16,7 @@ async def main():
     battery = await ep_drone.battery()
     print(f"Connected with drone '{serial}' with {battery}%")
 
-    #await ep_drone.set_own_wifi("A926F0", "")
+    #await ep_drone.set_own_wifi("DRONE", "") # drone adds RMTT- or TELLO- prefix
     await ep_drone.set_connecting_wifi("dronehub", "htl12345")
 
 if __name__ == '__main__':

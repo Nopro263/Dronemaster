@@ -1,8 +1,13 @@
 import asyncio
-from .import ProtocolSimulator
+import sys
+from . import ProtocolSimulator
 
 async def main():
-    simulator = ProtocolSimulator()
+    ip = "0.0.0.0"
+    if len(sys.argv) == 2:
+        ip = sys.argv[1]
+    
+    simulator = ProtocolSimulator(ip=ip)
     await simulator.loop()
 
 if __name__ == '__main__':

@@ -104,6 +104,9 @@ class Drone:
         self.last_state: Dict[str, Any] = {}
         self.connected = False
         self._state_subscribers = []
+        self._command_counter = hash(Drone) # init to random value
+        self._last_answer_id = None
+        self._waiting_action: Optional[Action] = None
 
     async def _action(self, action: Action, ignore_not_connected: bool = False) -> Any:
         if not self.connected and not ignore_not_connected:
@@ -142,18 +145,24 @@ class Drone:
         if not hasattr(l, "transport"):
             await l.start()
         
-        if l.protocol.on_state != l.protocol._on_state:
-            raise RuntimeError("the current sdk supports only one connected drone at a time")
+        if self.ip in l.protocol.drones:
+            raise RuntimeError("only one Drone object with the same ip may be in use at a time")
         
-        await self._action(RetryAction(
-            command="command",
-            positive_answers=OK,
-            negative_answers=ANY,
-            retry_count=5,
-            timeout=0.5
-        ), ignore_not_connected=True)
+        l.protocol.drones[self.ip] = self # pyright: ignore[reportArgumentType]
+        
+        try:
+            await self._action(RetryAction(
+                command="command",
+                positive_answers=OK,
+                negative_answers=ANY,
+                retry_count=5,
+                timeout=0.5,
+                drone=self
+            ), ignore_not_connected=True)
+        except ProtocolError | TimeoutError as e:
+            l.protocol.drones[self.ip] = None # pyright: ignore[reportArgumentType]
+            raise e
 
-        l.protocol.on_state = self._on_state
         self.connected = True
 
     async def serial_number(self) -> str:
@@ -169,7 +178,8 @@ class Drone:
             positive_answers=[r"^[A-Z0-9]{14}$"],
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self
         ))
 
     async def battery(self) -> int:
@@ -185,7 +195,8 @@ class Drone:
             positive_answers=[r"^\d{1,3}$"],
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self
         )))
     
     async def flight_time(self) -> int:
@@ -201,7 +212,8 @@ class Drone:
             positive_answers=[r"^\d+s$"],
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self
         ))
 
         return int(resp[:-1])
@@ -219,7 +231,8 @@ class Drone:
             positive_answers=[r"^\d+$"],
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self
         )))
     
     async def get_hardware(self) -> Literal["TELLO", "RMTT"]:
@@ -235,7 +248,8 @@ class Drone:
             positive_answers=[r"^(TELLO)|(RMTT)$"],
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self
         ))
     
     async def wifi_serial(self) -> str:
@@ -251,7 +265,8 @@ class Drone:
             positive_answers=ANY_POSITIVE,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self
         ))
     
     async def wifi_version(self) -> str:
@@ -267,7 +282,8 @@ class Drone:
             positive_answers=[r"^wifiv\d+\.\d+\.\d+\.\d+$"],
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self
         ))
 
     async def ext_tof(self):
@@ -283,7 +299,8 @@ class Drone:
             positive_answers=[r"^tof \d+$"],
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self
         ))
         tof = int(raw.split(" ")[1])
 
@@ -305,7 +322,8 @@ class Drone:
             positive_answers=[r"^\d+mm$"],
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self
         ))
         tof = int(raw[:-2])
 
@@ -322,13 +340,14 @@ class Drone:
         :raises ProtocolError: raised when not receiving `ok`
         :raises TimeoutError: raised when not answering after 2.5s
         """
-        if l.protocol.waiting_action is None:
+        if not self._waiting_action:
             await self._action(RetryAction(
                 command="command",
                 positive_answers=OK,
                 negative_answers=ANY,
                 retry_count=5,
-                timeout=0.5
+                timeout=0.5,
+            drone=self
             ))
             return True
         return False
@@ -350,7 +369,8 @@ class Drone:
             positive_answers=[r"^OK,drone will reboot in 3s$"],
             negative_answers=ANY,
             timeout=0.5,
-            retry_count=5
+            retry_count=5,
+            drone=self
         ))
     
     async def set_connecting_wifi(self, ssid: str, pwd: str) -> None:
@@ -370,7 +390,8 @@ class Drone:
             positive_answers=[r"^OK,drone will reboot in 3s$"],
             negative_answers=ANY,
             timeout=0.5,
-            retry_count=5
+            retry_count=5,
+            drone=self
         ))
 
     async def send_raw_command(self, command, wait_for_answer: bool = True, timeout: float = 1) -> Optional[str]:
@@ -389,7 +410,8 @@ class Drone:
                 positive_answers=ANY_POSITIVE,
                 negative_answers=ANY,
                 retry_count=5,
-                timeout=timeout
+                timeout=timeout,
+                drone=self
             ))
         else:
             l.protocol.send_command_noanswer(command, self.ip)
@@ -401,7 +423,15 @@ class Drone:
         """
         l.protocol.send_command_noanswer("reboot", self.ip)
         self.connected = False
-        l.protocol.on_state = l.protocol._on_state
+        del l.protocol.drones[self.ip]
+
+    def disconnect(self) -> None:
+        """
+        disconnect from the drone
+        """
+
+        self.connected = False
+        del l.protocol.drones[self.ip]
 
 class Module:
     def __init__(self, drone: Drone):
@@ -423,7 +453,8 @@ class Video(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
 
     async def streamoff(self) -> None:
@@ -438,7 +469,8 @@ class Video(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
     
     async def downvision(self, on: bool) -> None:
@@ -454,7 +486,8 @@ class Video(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
     
     async def setfps(self, fps: Literal["high","middle","low"]) -> None:
@@ -473,7 +506,8 @@ class Video(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
     
     async def setbitrate(self, bitrate: Literal["auto",1,2,3,4,5]) -> None:
@@ -496,7 +530,8 @@ class Video(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
     
     async def setresolution(self, resolution: Literal["high","low"]) -> None:
@@ -515,7 +550,8 @@ class Video(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
     
     async def set_video_port(self, port: int) -> None:
@@ -533,7 +569,8 @@ class Video(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
 
 class Flight(Module):
@@ -548,7 +585,8 @@ class Flight(Module):
             command="takeoff",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=20
+            timeout=20,
+            drone=self.drone
         ))
 
     async def forward(self, dist: int, timeout: float = 5) -> None:
@@ -565,7 +603,8 @@ class Flight(Module):
             command=f"forward {dist}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=timeout
+            timeout=timeout,
+            drone=self.drone
         ))
 
     async def back(self, dist: int, timeout: float = 5) -> None:
@@ -582,7 +621,8 @@ class Flight(Module):
             command=f"back {dist}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=timeout
+            timeout=timeout,
+            drone=self.drone
         ))
 
     async def up(self, dist: int, timeout: float = 5) -> None:
@@ -599,7 +639,8 @@ class Flight(Module):
             command=f"up {dist}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=timeout
+            timeout=timeout,
+            drone=self.drone
         ))
 
     async def down(self, dist: int, timeout: float = 5) -> None:
@@ -616,7 +657,8 @@ class Flight(Module):
             command=f"down {dist}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=timeout
+            timeout=timeout,
+            drone=self.drone
         ))
 
     async def left(self, dist: int, timeout: float = 5) -> None:
@@ -633,7 +675,8 @@ class Flight(Module):
             command=f"left {dist}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=timeout
+            timeout=timeout,
+            drone=self.drone
         ))
 
     async def right(self, dist: int, timeout: float = 5) -> None:
@@ -650,7 +693,8 @@ class Flight(Module):
             command=f"right {dist}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=timeout
+            timeout=timeout,
+            drone=self.drone
         ))
 
     async def clockwise(self, angle: int, timeout: float = 5) -> None:
@@ -667,7 +711,8 @@ class Flight(Module):
             command=f"cw {angle}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=timeout
+            timeout=timeout,
+            drone=self.drone
         ))
 
     async def counterclockwise(self, angle: int, timeout: float = 5) -> None:
@@ -684,7 +729,8 @@ class Flight(Module):
             command=f"ccw {angle}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=timeout
+            timeout=timeout,
+            drone=self.drone
         ))
 
     async def land(self) -> None:
@@ -698,7 +744,8 @@ class Flight(Module):
             command="land",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=20
+            timeout=20,
+            drone=self.drone
         ))
 
     async def stop(self) -> None:
@@ -712,7 +759,8 @@ class Flight(Module):
             command="stop",
             positive_answers= [r"^forced stop$", r"^ok$"],
             negative_answers=ANY,
-            timeout=5
+            timeout=5,
+            drone=self.drone
         ))
 
     async def emergency(self) -> None:
@@ -727,7 +775,8 @@ class Flight(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
 
     async def motoron(self) -> None:
@@ -743,7 +792,8 @@ class Flight(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
 
     async def motoroff(self) -> None:
@@ -758,7 +808,8 @@ class Flight(Module):
             positive_answers=OK,
             negative_answers=ANY,
             retry_count=5,
-            timeout=1
+            timeout=1,
+            drone=self.drone
         ))
 
     async def flip(self, direction: Literal["l", "r", "f", "b"], timeout: float = 5) -> None:
@@ -777,7 +828,8 @@ class Flight(Module):
             command=f"flip {direction}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=timeout
+            timeout=timeout,
+            drone=self.drone
         ))
     
     async def throwfly(self) -> None:
@@ -792,7 +844,8 @@ class Flight(Module):
             command="throwfly",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=5
+            timeout=5,
+            drone=self.drone
         ))
     
     async def speed(self, speed: int) -> None:
@@ -809,7 +862,8 @@ class Flight(Module):
             command=f"speed {speed}",
             positive_answers=OK,
             negative_answers=ANY,
-            timeout=5
+            timeout=5,
+            drone=self.drone
         ))
 
     def rc(self, roll: int, pitch: int, throttle: int, yaw: int) -> None:
@@ -846,7 +900,8 @@ class RGBLed(Module):
             positive_answers=[r"^led ok$"],
             negative_answers=ANY,
             timeout=0.5,
-            retry_count=5
+            retry_count=5,
+            drone=self.drone
         ))
 
     async def pulse(self, color: Tuple[int, int, int], frequency: float) -> None:
@@ -868,7 +923,8 @@ class RGBLed(Module):
             positive_answers=[r"^led ok$"],
             negative_answers=ANY,
             timeout=0.5,
-            retry_count=5
+            retry_count=5,
+            drone=self.drone
         ))
 
     async def flash(self, color1: Tuple[int, int, int], color2: Tuple[int, int, int], frequency: float) -> None:
@@ -895,7 +951,8 @@ class RGBLed(Module):
             positive_answers=[r"^led ok$"],
             negative_answers=ANY,
             timeout=0.5,
-            retry_count=5
+            retry_count=5,
+            drone=self.drone
         ))
 
 class Matrix(Module):
@@ -924,7 +981,8 @@ class Matrix(Module):
             positive_answers=[r"^matrix ok$"],
             negative_answers=ANY,
             timeout=0.5,
-            retry_count=5
+            retry_count=5,
+            drone=self.drone
         ))
 
     async def set_pattern(self, pattern: str) -> None:
@@ -943,7 +1001,8 @@ class Matrix(Module):
             positive_answers=[r"^matrix ok$"],
             negative_answers=ANY,
             timeout=0.5,
-            retry_count=5
+            retry_count=5,
+            drone=self.drone
         ))
 
         self.pattern = pattern
